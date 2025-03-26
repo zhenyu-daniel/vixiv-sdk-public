@@ -3,7 +3,7 @@ import os
 from typing import Dict, Optional
 
 class VoxelizeClient:
-    def __init__(self, api_key: Optional[str] = None, base_url: str = "https://api.vixiv.com/api/v1"):
+    def __init__(self, api_key: Optional[str] = None, base_url: str = "http://127.0.0.1:5000/api/v1"):
         self.base_url = base_url.rstrip('/')
         self.api_key = api_key or os.environ.get('VOXELIZE_API_KEY')
         if not self.api_key:
