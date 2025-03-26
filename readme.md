@@ -1,6 +1,7 @@
 # Voxelize SDK
 
 A Python SDK for interacting with the Voxelize API for mesh processing and voxelization.
+Subscription Price Starting At 10k/year.
 
 ## Installation
 
