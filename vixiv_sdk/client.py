@@ -111,27 +111,17 @@ class VoxelizeClient:
         return self._make_request('POST', 'generate-shader', json=data)
 
     def calculate_voxel_centers(self,
-                              cell_type: str,
-                              cell_size: float,
-                              force_dir: Tuple[float, float, float] = (0, 0, 1),
-                              rotation_point: Optional[Tuple[float, float, float]] = None) -> Dict:
-        """
-        Calculate voxel centers.
-        
-        Args:
-            cell_type: Type of cell
-            cell_size: Size of the cells
-            force_dir: Force direction vector
-            rotation_point: Point to rotate around
-        """
+                          cell_type: str,
+                          cell_size: float,
+                          force_dir: Tuple[float, float, float] = (0, 0, 1)) -> Dict:
+        """Calculate voxel centers."""
         data = {
-            'cell_type': cell_type,
-            'cell_size': cell_size,
-            'force_dir': force_dir
-        }
-        if rotation_point is not None:
-            data['rotation_point'] = rotation_point
-            
+        'cell_type': cell_type,
+        'cell_size': cell_size,
+        'force_dir_x': force_dir[0],
+        'force_dir_y': force_dir[1],
+        'force_dir_z': force_dir[2]
+    }
         return self._make_request('POST', 'voxel-centers', json=data)
 
     def _make_request(self, method: str, endpoint: str, **kwargs) -> Dict:
