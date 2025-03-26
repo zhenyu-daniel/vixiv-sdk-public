@@ -7,7 +7,7 @@ A Python SDK for interacting with the Voxelize API for mesh processing and voxel
 You can install the package directly from GitHub:
 
 ```bash
-pip install git+https://github.com/vixiv-software/VIXIV-FLASK-API.git
+pip install git+https://github.com/zhenyu-daniel/vixiv-sdk-public.git
 ```
 
 ## Usage
