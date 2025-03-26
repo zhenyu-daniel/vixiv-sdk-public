@@ -15,6 +15,14 @@ class VoxelizeClient:
             'Content-Type': 'application/json'
         })
 
+    def get_status(self) -> Dict:
+        """Get the current status of the API."""
+        return self._make_request('GET', 'status')
+
+    def get_state(self) -> Dict:
+        """Get the current processing state."""
+        return self._make_request('GET', 'state')
+
     def voxelize_mesh(self, file_path: str, **kwargs) -> Dict:
         """Voxelize a mesh file."""
         with open(file_path, 'rb') as f:
@@ -44,4 +52,4 @@ class VoxelizeClient:
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
         response = self.session.request(method, url, **kwargs)
         response.raise_for_status()
-        return response.json() 
+        return response.json()
