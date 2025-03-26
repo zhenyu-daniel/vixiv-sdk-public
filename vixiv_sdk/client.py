@@ -119,6 +119,7 @@ class VoxelizeClient:
     def generate_shader(self,
                    cell_type: str,
                    positions: List[Tuple[float, float, float]],
+                   shader_path: str,  # Required parameter
                    cell_size: float = 40.0,
                    beam_diameter: float = 2.0,
                    view_normals: bool = False,
@@ -129,18 +130,17 @@ class VoxelizeClient:
         Args:
             cell_type: Type of cell ("fcc", "bcc", or "flourite")
             positions: List of cell center positions
+            shader_path: Path where to save the shader output
             cell_size: Size of the cells in mm
             beam_diameter: Diameter of the beams in mm
             view_normals: Whether to visualize as shaded or normals
             aa_passes: Number of anti-aliasing passes
             angle: Rotation angle in degrees
-            
-        Returns:
-            Dict containing success status and shader content
         """
         data = {
             'cell_type': cell_type,
             'positions': positions,
+            'shader_path': shader_path,  # Include in request
             'cell_size': cell_size,
             'beam_diameter': beam_diameter,
             'view_normals': view_normals,
