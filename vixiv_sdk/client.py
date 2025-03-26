@@ -117,37 +117,48 @@ class VoxelizeClient:
             return response
     
     def generate_shader(self,
-                   cell_type: str,
-                   positions: List[Tuple[float, float, float]],
-                   shader_path: str,  # Required parameter
-                   cell_size: float = 40.0,
-                   beam_diameter: float = 2.0,
-                   view_normals: bool = False,
-                   aa_passes: int = 0,
-                   angle: float = 0.0) -> Dict:
+                    cell_type: str,
+                    positions: List[Tuple[float, float, float]],
+                    output_path: Optional[str] = None,  # Optional path to save shader
+                    cell_size: float = 40.0,
+                    beam_diameter: float = 2.0,
+                    view_normals: bool = False,
+                    aa_passes: int = 0,
+                    angle: float = 0.0) -> Dict:
         """Generate a shader for visualization.
         
         Args:
             cell_type: Type of cell ("fcc", "bcc", or "flourite")
             positions: List of cell center positions
-            shader_path: Path where to save the shader output
+            output_path: Optional path to save the shader locally
             cell_size: Size of the cells in mm
             beam_diameter: Diameter of the beams in mm
             view_normals: Whether to visualize as shaded or normals
             aa_passes: Number of anti-aliasing passes
             angle: Rotation angle in degrees
+            
+        Returns:
+            Dict containing success status and shader content
         """
         data = {
             'cell_type': cell_type,
             'positions': positions,
-            'shader_path': shader_path,  # Include in request
             'cell_size': cell_size,
             'beam_diameter': beam_diameter,
             'view_normals': view_normals,
             'aa_passes': aa_passes,
             'angle': angle
         }
-        return self._make_request('POST', 'generate-shader', json=data)
+        
+        response = self._make_request('POST', 'generate-shader', json=data)
+        
+        if response.get('success') and response.get('shader_content') and output_path:
+            # Save shader content to specified path if provided
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            with open(output_path, 'w') as f:
+                f.write(response['shader_content'])
+        
+        return response
     
     def calculate_voxel_centers(self,
                               cell_type: str,
