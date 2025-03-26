@@ -1,6 +1,6 @@
 import requests
 import os
-from typing import Dict, Optional, Tuple, Union
+from typing import Dict, Optional, Tuple, List, Union
 
 class VoxelizeClient:
     def __init__(self, api_key: Optional[str] = None, base_url: str = "http://127.0.0.1:5000/api/v1"):
@@ -15,28 +15,14 @@ class VoxelizeClient:
         })
 
     def voxelize_mesh(self, 
-                     file_path: str, 
+                     file_path: str,
                      cell_type: str = "fcc",
                      cell_size: float = 40.0,
                      beam_diameter: float = 2.0,
                      min_skin_thickness: float = 0.01,
                      sampling_res: Tuple[int, int, int] = (1, 1, 1),
                      force_dir: Tuple[float, float, float] = (0, 0, 1)) -> Dict:
-        """
-        Voxelize a mesh file using the specified parameters.
-        
-        Args:
-            file_path: Path to the input STL file
-            cell_type: Type of cell ("fcc", "bcc", or "flourite")
-            cell_size: Size of the cells in mm
-            beam_diameter: Diameter of the beams in mm
-            min_skin_thickness: Minimum skin thickness in mm
-            sampling_res: Sampling resolution in xyz directions
-            force_dir: Force direction vector for unit cell orientation
-            
-        Returns:
-            Dict containing success status and output file path
-        """
+        """Voxelize a mesh file."""
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File not found: {file_path}")
             
@@ -73,29 +59,23 @@ class VoxelizeClient:
 
     def generate_shader(self,
                        cell_type: str,
-                       positions: list,
-                       cell_size: Union[float, Tuple[float, float, float]] = 40.0,
+                       positions: List[Tuple[float, float, float]],
+                       cell_size: float = 40.0,
                        beam_diameter: float = 2.0,
                        view_normals: bool = False,
                        aa_passes: int = 0,
-                       angle: float = 0.0,
-                       rotation_point: Optional[Tuple[float, float, float]] = None) -> Dict:
-        """
-        Generate a shader for visualization.
+                       angle: float = 0.0) -> Dict:
+        """Generate a shader for visualization.
         
         Args:
-            cell_type: Type of cell
+            cell_type: Type of cell ("fcc", "bcc", or "flourite")
             positions: List of cell center positions
-            cell_size: Size of the cells (single float or tuple for xyz)
-            beam_diameter: Diameter of the beams
+            cell_size: Size of the cells in mm
+            beam_diameter: Diameter of the beams in mm
             view_normals: Whether to visualize as shaded or normals
             aa_passes: Number of anti-aliasing passes
-            angle: Rotation angle
-            rotation_point: Point to rotate around
+            angle: Rotation angle in degrees
         """
-        if isinstance(cell_size, (int, float)):
-            cell_size = (float(cell_size), float(cell_size), float(cell_size))
-            
         data = {
             'cell_type': cell_type,
             'positions': positions,
@@ -105,24 +85,39 @@ class VoxelizeClient:
             'aa_passes': aa_passes,
             'angle': angle
         }
-        if rotation_point is not None:
-            data['rotation_point'] = rotation_point
-            
         return self._make_request('POST', 'generate-shader', json=data)
 
     def calculate_voxel_centers(self,
-                          cell_type: str,
-                          cell_size: float,
-                          force_dir: Tuple[float, float, float] = (0, 0, 1)) -> Dict:
-        """Calculate voxel centers."""
+                              cell_type: str,
+                              cell_size: float,
+                              force_dir: Tuple[float, float, float] = (0, 0, 1)) -> Dict:
+        """Calculate voxel centers.
+        
+        Args:
+            cell_type: Type of cell ("fcc", "bcc", or "flourite")
+            cell_size: Size of the cells in mm
+            force_dir: Force direction vector for unit cell orientation
+        """
         data = {
-        'cell_type': cell_type,
-        'cell_size': cell_size,
-        'force_dir_x': force_dir[0],
-        'force_dir_y': force_dir[1],
-        'force_dir_z': force_dir[2]
-    }
+            'cell_type': cell_type,
+            'cell_size': cell_size,
+            'force_dir_x': force_dir[0],
+            'force_dir_y': force_dir[1],
+            'force_dir_z': force_dir[2]
+        }
         return self._make_request('POST', 'voxel-centers', json=data)
+
+    def get_state(self) -> Dict:
+        """Get the current processing state (only available in stateful mode)."""
+        return self._make_request('GET', 'state')
+
+    def clear_state(self) -> Dict:
+        """Clear the current state (only available in stateful mode)."""
+        return self._make_request('DELETE', 'state')
+
+    def get_status(self) -> Dict:
+        """Get the current status of the API."""
+        return self._make_request('GET', 'status')
 
     def _make_request(self, method: str, endpoint: str, **kwargs) -> Dict:
         """Make a request to the API."""
@@ -137,11 +132,3 @@ class VoxelizeClient:
         response = self.session.request(method, url, **kwargs)
         response.raise_for_status()
         return response.json()
-
-    def get_status(self) -> Dict:
-        """Get the current status of the API."""
-        return self._make_request('GET', 'status')
-
-    def get_state(self) -> Dict:
-        """Get the current processing state."""
-        return self._make_request('GET', 'state')
