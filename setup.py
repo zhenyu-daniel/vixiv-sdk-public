@@ -13,8 +13,13 @@ setup(
     long_description_content_type="text/markdown",
     packages=find_packages(),
     install_requires=[
-        "requests>=2.31.0",
-        "python-dotenv>=0.19.0"
+        "requests==2.32.3",
+        "python-dotenv==1.1.0",
+        "certifi==2025.1.31",
+        "charset-normalizer==3.4.1",
+        "idna==3.10",
+        "numpy==2.2.4",
+        "urllib3==2.3.0"
     ],
     python_requires=">=3.10",
     classifiers=[
