@@ -8,7 +8,7 @@ logging.basicConfig(level=logging.DEBUG)
 def main():
     # Initialize the client
     api_key = "1234567890"
-    client = VoxelizeClient(api_key=api_key, base_url="http://192.168.1.215:5000/api/v1")
+    client = VoxelizeClient(api_key=api_key, base_url="http://98.123.166.42:5000/api/v1")
     
     try:
         skin_path = os.path.join("mesh", "Test16.stl")
