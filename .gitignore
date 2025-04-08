@@ -65,5 +65,5 @@ coverage.xml
 .env.test.local
 .env.production.local
 
-example*
 example.py
+example_2.py
