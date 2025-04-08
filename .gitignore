@@ -66,4 +66,3 @@ coverage.xml
 .env.production.local
 
 example*
-example.py
