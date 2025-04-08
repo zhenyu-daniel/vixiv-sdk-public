@@ -338,4 +338,75 @@ class VoxelizeClient:
         Returns:
             Dict: API status information including rate limiting and state management status
         """
-        return self._make_request('GET', 'status') 
+        return self._make_request('GET', 'status')
+
+    def FCC(self, beam_radius: float, bounding_box: tuple = (40, 40, 40)):
+        """Create an FCC unit cell and save it as STL.
+        
+        Args:
+            beam_radius (float): Radius of the beams
+            bounding_box (tuple): Size of the bounding box (x, y, z)
+            
+        Returns:
+            str: Path to the generated STL file
+        """
+        data = {
+            'beam_radius': beam_radius,
+            'cell_size': bounding_box
+        }
+        response = self._make_request('POST', 'fcc', json=data)
+        if response.get('success'):
+            return response['file_path']
+        raise ValueError(response.get('error', 'Unknown error occurred'))
+
+    def BCC(self, beam_radius: float, bounding_box: tuple = (40, 40, 40)):
+        """Create a BCC unit cell and save it as STL.
+        
+        Args:
+            beam_radius (float): Radius of the beams
+            bounding_box (tuple): Size of the bounding box (x, y, z)
+            
+        Returns:
+            str: Path to the generated STL file
+        """
+        data = {
+            'beam_radius': beam_radius,
+            'cell_size': bounding_box
+        }
+        response = self._make_request('POST', 'bcc', json=data)
+        if response.get('success'):
+            return response['file_path']
+        raise ValueError(response.get('error', 'Unknown error occurred'))
+
+    def Flourite(self, beam_radius: float, bounding_box: tuple = (40, 40, 40)):
+        """Create a Flourite unit cell and save it as STL.
+        
+        Args:
+            beam_radius (float): Radius of the beams
+            bounding_box (tuple): Size of the bounding box (x, y, z)
+            
+        Returns:
+            str: Path to the generated STL file
+        """
+        data = {
+            'beam_radius': beam_radius,
+            'cell_size': bounding_box
+        }
+        response = self._make_request('POST', 'flourite', json=data)
+        if response.get('success'):
+            return response['file_path']
+        raise ValueError(response.get('error', 'Unknown error occurred'))
+
+    def volume(self, file_path: str) -> float:
+        """Calculate the volume of a mesh file.
+        
+        Args:
+            file_path (str): Path to the STL file
+            
+        Returns:
+            float: Volume of the mesh
+        """
+        response = self._make_request('GET', 'volume', params={'file_path': file_path})
+        if response.get('success'):
+            return float(response['volume'])
+        raise ValueError(response.get('error', 'Unknown error occurred')) 
