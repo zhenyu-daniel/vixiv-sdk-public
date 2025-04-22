@@ -4,45 +4,88 @@ from typing import Dict, List, Union, Optional, Tuple
 import os
 from pathlib import Path
 import numpy as np
+import tempfile
+import shutil
 
 class VoxelizeClient:
     """Python client for the Voxelize API."""
     
-    def __init__(self, api_key: Optional[str] = None, base_url: str = "http://localhost:5000/api/v1"):
-        """Initialize the Voxelize client.
+    def __init__(self, api_key=None, api_url=None, base_url=None):
+        """Initialize the client with API key and URL.
         
         Args:
-            api_key (str, optional): API key for authentication. If not provided, will look for VOXELIZE_API_KEY environment variable
-            base_url (str): Base URL of the Voxelize API. Defaults to http://localhost:5000/api/v1
+            api_key (str, optional): API key for authentication. If not provided, will look for VIXIV_API_KEY environment variable
+            api_url (str, optional): Base URL of the API. If not provided, will look for VIXIV_API_URL environment variable
+            base_url (str, optional): Alias for api_url, maintained for backward compatibility
         """
-        self.base_url = base_url.rstrip('/')
-        print(os.environ.get('VOXELIZE_API_KEY'))
-        self.api_key = api_key or os.environ.get('VOXELIZE_API_KEY')
+        self.api_key = api_key or os.getenv('VIXIV_API_KEY')
         if not self.api_key:
-            raise ValueError("API key must be provided either through constructor or VOXELIZE_API_KEY environment variable")
+            raise ValueError("API key must be provided either directly or through VIXIV_API_KEY environment variable")
         
-        # Don't set Content-Type header in session - let requests set it automatically for multipart
+        # Handle both api_url and base_url for backward compatibility
+        self.api_url = api_url or base_url or os.getenv('VIXIV_API_URL', 'https://vixiv-flask-api-gcp-523287772169.us-central1.run.app')
         self.session = requests.Session()
-        self.session.headers.update({
-            'X-API-Key': self.api_key
-        })
-        
+        self.session.headers.update({'X-API-Key': self.api_key})
+
+    def _download_file(self, url_or_path, output_path=None):
+        """Download a file from a URL or copy from local path."""
+        try:
+            # If it's a local path, just copy the file
+            if os.path.exists(url_or_path):
+                if output_path:
+                    shutil.copy2(url_or_path, output_path)
+                    return output_path
+                else:
+                    # Create a temporary file with .stl extension
+                    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.stl')
+                    output_path = temp_file.name
+                    temp_file.close()
+                    shutil.copy2(url_or_path, output_path)
+                    return output_path
+
+            # Otherwise, download from URL
+            headers = {'X-API-Key': self.api_key}
+            response = requests.get(url_or_path, stream=True, headers=headers)
+            response.raise_for_status()
+
+            if output_path is None:
+                # Create a temporary file with .stl extension
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.stl')
+                output_path = temp_file.name
+                temp_file.close()
+
+            with open(output_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+
+            return output_path
+
+        except requests.exceptions.RequestException as e:
+            print(f"Error downloading file: {str(e)}")
+            raise
+
+    def _upload_file(self, file_path: str, upload_url: str, content_type: str = 'application/octet-stream'):
+        """Upload a file using a signed URL."""
+        try:
+            with open(file_path, 'rb') as f:
+                headers = {'Content-Type': content_type}
+                response = requests.put(upload_url, data=f, headers=headers)
+                response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            print(f"Error uploading file: {str(e)}")
+            raise
+    
     def _make_request(self, method: str, endpoint: str, **kwargs) -> Dict:
-        """Make a request to the API.
-        
-        Args:
-            method (str): HTTP method (GET, POST, DELETE)
-            endpoint (str): API endpoint
-            **kwargs: Additional arguments to pass to requests
-            
-        Returns:
-            Dict: Response from the API
-            
-        Raises:
-            requests.exceptions.RequestException: If the request fails
-            ValueError: If the API returns an error
-        """
-        url = f"{self.base_url}/{endpoint.lstrip('/')}"
+        """Make a request to the API."""
+        url = f"{self.api_url}/{endpoint.lstrip('/')}"
+        print(f"Making request to: {url}")
+        print(f"Method: {method}")
+        print(f"Headers: {self.session.headers}")
+        if 'data' in kwargs:
+            print(f"Form data: {kwargs['data']}")
+        if 'files' in kwargs:
+            print(f"Files: {[f for f in kwargs['files'].keys()]}")
         
         # Remove Content-Type header for multipart file uploads
         headers = self.session.headers.copy()
@@ -57,9 +100,60 @@ class VoxelizeClient:
         elif response.status_code == 401:
             raise ValueError("Invalid API key")
         
-        response.raise_for_status()
-        return response.json()
-    
+        try:
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.HTTPError as e:
+            print(f"Response status code: {response.status_code}")
+            print(f"Response content: {response.text}")
+            raise
+
+    def voxelize_mesh(self,
+                      file_path: str,
+                      network_path: str,
+                      cell_type: str = "fcc",
+                      cell_size: tuple = (40, 40, 40),
+                      beam_diameter: float = 2.0,
+                      offsets: np.ndarray = None,
+                      force_dir: tuple = (0, 0, 1),
+                      min_skin_thickness: float = 0.01,
+                      invert_cells: bool = True,
+                      cell_centers: np.ndarray = None,
+                      zero_thickness_dir: str = 'x') -> str:
+        """Voxelize a mesh file and save the result."""
+        try:
+            if not os.path.exists(file_path):
+                raise FileNotFoundError(f"File not found: {file_path}")
+            
+            if not file_path.lower().endswith('.stl'):
+                raise ValueError("Only STL files are supported")
+
+            # Prepare form data
+            data = {
+                'cell_type': cell_type,
+                'cell_size': f"{cell_size[0]},{cell_size[1]},{cell_size[2]}",
+                'beam_diameter': str(beam_diameter),
+                'force_dir': f"{force_dir[0]},{force_dir[1]},{force_dir[2]}",
+                'min_skin_thickness': str(min_skin_thickness),
+                'offsets': json.dumps(offsets.tolist() if hasattr(offsets, 'tolist') else offsets),
+                'cell_centers': json.dumps(cell_centers.tolist() if hasattr(cell_centers, 'tolist') else cell_centers)
+            }
+
+            # Upload and process the file
+            with open(file_path, 'rb') as f:
+                files = {'file': (os.path.basename(file_path), f, 'application/octet-stream')}
+                response = self._make_request('POST', 'voxelize', files=files, data=data)
+            
+            if response.get('success'):
+                # Download using the authenticated URL
+                download_url = response['result']['download_url']
+                return self._download_file(download_url, network_path)
+            raise ValueError(response.get('error', 'Unknown error occurred'))
+
+        except Exception as e:
+            print(f"Error during voxelization: {str(e)}")
+            raise
+
     def get_mesh_voxels(self,
                       file_path: str,
                       cell_size: tuple = (40, 40, 40),
@@ -106,67 +200,6 @@ class VoxelizeClient:
                 )
             raise ValueError(response.get('error', 'Unknown error occurred'))
 
-    def voxelize_mesh(self, 
-                     file_path: str,
-                     network_path: str,
-                     cell_type: str = "fcc",
-                     cell_size: tuple = (40, 40, 40),
-                     beam_diameter: float = 2.0,
-                     offsets: np.ndarray = None,
-                     force_dir: tuple = (0, 0, 1),
-                     min_skin_thickness: float = 0.01,
-                     invert_cells: bool = True,
-                     cell_centers: np.ndarray = None,
-                     zero_thickness_dir: str = 'x') -> str:
-        """
-        Voxelize a mesh file using the specified parameters.
-        
-        Args:
-            file_path: Path to the input STL file
-            network_path: Path where the network mesh will be saved
-            cell_type: Type of cell ("fcc", "bcc", or "flourite")
-            cell_size: Size of the cells in mm (tuple of x,y,z values)
-            beam_diameter: Diameter of the beams in mm
-            offsets: Offsets data from get_mesh_voxels
-            force_dir: Force direction vector for unit cell orientation
-            min_skin_thickness: Minimum skin thickness in mm
-            invert_cells: Whether to generate the inverse space of the unit cell
-            cell_centers: Center positions of all cells within the skin
-            zero_thickness_dir: Direction to remove portions of the skin for manufacturability
-            
-        Returns:
-            str: Path to the network mesh file
-        """
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"File not found: {file_path}")
-        
-        if not file_path.lower().endswith('.stl'):
-            raise ValueError("Only STL files are supported")
-        
-        with open(file_path, 'rb') as f:
-            files = {'file': (os.path.basename(file_path), f, 'application/octet-stream')}
-            
-            data = {
-                'cell_type': cell_type,
-                'cell_size': f"{cell_size[0]},{cell_size[1]},{cell_size[2]}",
-                'beam_diameter': str(beam_diameter),
-                'force_dir': f"{force_dir[0]},{force_dir[1]},{force_dir[2]}",
-                'min_skin_thickness': str(min_skin_thickness),
-                'offsets': json.dumps(offsets.tolist()) if offsets is not None else None,
-                'cell_centers': json.dumps(cell_centers.tolist()) if cell_centers is not None else None
-            }
-            
-            response = self._make_request('POST', 'voxelize', files=files, data=data)
-            
-            if response.get('success'):
-                result = response['result']
-                output_dir = os.path.dirname(network_path)
-                output_path = os.path.join(output_dir, result['filename'])
-                with open(output_path, 'wb') as f:
-                    f.write(bytes.fromhex(result['file_content']))
-                return output_path
-            raise ValueError(response.get('error', 'Unknown error occurred'))
-
     def integrate_network(self,
                         skin_path: str,
                         network_path: str,
@@ -200,12 +233,9 @@ class VoxelizeClient:
             response = self._make_request('POST', 'integrate-network', files=files)
             
             if response.get('success'):
-                result = response['result']
-                output_dir = os.path.dirname(out_path) if out_path else os.path.dirname(skin_path)
-                output_path = out_path if out_path else os.path.join(output_dir, result['filename'])
-                with open(output_path, 'wb') as f:
-                    f.write(bytes.fromhex(result['file_content']))
-                return output_path
+                # Download using the public URL
+                download_url = response['result']['download_url']
+                return self._download_file(download_url, out_path)
             raise ValueError(response.get('error', 'Unknown error occurred'))
     
     def read_mesh(self, file_path: str) -> np.ndarray:
