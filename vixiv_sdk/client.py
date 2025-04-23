@@ -27,6 +27,10 @@ class VoxelizeClient:
         self.session = requests.Session()
         self.session.headers.update({'X-API-Key': self.api_key})
 
+    def _is_gcs_url(self, url: str) -> bool:
+        """Check if a URL is a Google Cloud Storage URL."""
+        return url.startswith('https://storage.googleapis.com/') or url.startswith('gs://')
+
     def _download_file(self, url_or_path, output_path=None):
         """Download a file from a URL or copy from local path."""
         try:
@@ -43,16 +47,16 @@ class VoxelizeClient:
                     shutil.copy2(url_or_path, output_path)
                     return output_path
 
-            # Otherwise, download from URL
-            headers = {'X-API-Key': self.api_key}
-            response = requests.get(url_or_path, stream=True, headers=headers)
-            response.raise_for_status()
-
+            # If no output path specified, create a temporary file
             if output_path is None:
-                # Create a temporary file with .stl extension
                 temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.stl')
                 output_path = temp_file.name
                 temp_file.close()
+
+            # Download from URL
+            headers = {'X-API-Key': self.api_key} if not self._is_gcs_url(url_or_path) else {}
+            response = requests.get(url_or_path, stream=True, headers=headers)
+            response.raise_for_status()
 
             with open(output_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
@@ -224,19 +228,85 @@ class VoxelizeClient:
         if not skin_path.lower().endswith('.stl') or not network_path.lower().endswith('.stl'):
             raise ValueError("Only STL files are supported")
         
-        with open(skin_path, 'rb') as skin_f, open(network_path, 'rb') as network_f:
-            files = {
-                'skin_file': (os.path.basename(skin_path), skin_f, 'application/octet-stream'),
-                'network_file': (os.path.basename(network_path), network_f, 'application/octet-stream')
-            }
+        # Check file sizes
+        skin_size = os.path.getsize(skin_path)
+        network_size = os.path.getsize(network_path)
+        
+        # Use direct upload for large files (> 20MB)
+        skin_url = self._upload_file_to_gcs(skin_path, skin_size > 20 * 1024 * 1024)
+        network_url = self._upload_file_to_gcs(network_path, network_size > 20 * 1024 * 1024)
+        
+        # Now send the GCS URLs to the integrate-network endpoint
+        data = {
+            'skin_url': skin_url,
+            'network_url': network_url
+        }
+        
+        response = self._make_request('POST', 'integrate-network', json=data)
+        
+        if response.get('success'):
+            # Download using the public URL
+            download_url = response['result']['download_url']
+            return self._download_file(download_url, out_path)
+        raise ValueError(response.get('error', 'Unknown error occurred'))
+        
+    def _upload_file_to_gcs(self, file_path: str, use_direct_upload: bool = False) -> str:
+        """
+        Upload a file to GCS using the appropriate method based on file size.
+        
+        Args:
+            file_path: Path to the file to upload
+            use_direct_upload: Whether to use direct upload to GCS
             
-            response = self._make_request('POST', 'integrate-network', files=files)
+        Returns:
+            str: The download URL for the uploaded file
+        """
+        filename = os.path.basename(file_path)
+        
+        if use_direct_upload:
+            # For large files, get information for direct upload
+            print(f"File {filename} is large, using direct upload to GCS")
+            response = self._make_request('POST', 'split-upload', json={'filename': filename})
+            if not response.get('success'):
+                raise ValueError(response.get('error', 'Failed to get upload information'))
             
-            if response.get('success'):
-                # Download using the public URL
-                download_url = response['result']['download_url']
-                return self._download_file(download_url, out_path)
-            raise ValueError(response.get('error', 'Unknown error occurred'))
+            # Use curl command to upload directly to GCS
+            blob_name = response['result']['blob_name']
+            bucket = response['result']['bucket']
+            url = f"https://storage.googleapis.com/{bucket}/{blob_name}"
+            
+            curl_command = ['curl', '-X', 'PUT', '-T', file_path, 
+                           '-H', 'Content-Type: application/octet-stream', 
+                           url]
+            
+            import subprocess
+            try:
+                print(f"Executing: {' '.join(curl_command)}")
+                result = subprocess.run(curl_command, capture_output=True, text=True, check=True)
+                print(f"Upload result: {result.stdout}")
+                return response['result']['download_url']
+            except subprocess.CalledProcessError as e:
+                print(f"Upload error: {e.stderr}")
+                raise ValueError(f"Failed to upload file: {e.stderr}")
+            except FileNotFoundError:
+                # If curl is not available, try with requests in chunks
+                print("curl not found, trying with requests")
+                return self._upload_with_requests(file_path, url)
+        else:
+            # For smaller files, use the regular upload endpoint
+            with open(file_path, 'rb') as f:
+                files = {'file': (filename, f, 'application/octet-stream')}
+                response = self._make_request('POST', 'upload-to-gcs', files=files)
+                if not response.get('success'):
+                    raise ValueError(response.get('error', 'Failed to upload file'))
+                return response['result']['download_url']
+                
+    def _upload_with_requests(self, file_path: str, url: str) -> str:
+        """Upload a file with requests library."""
+        with open(file_path, 'rb') as f:
+            response = requests.put(url, data=f, headers={'Content-Type': 'application/octet-stream'})
+            response.raise_for_status()
+        return url
     
     def read_mesh(self, file_path: str) -> np.ndarray:
         """
@@ -378,7 +448,7 @@ class VoxelizeClient:
             bounding_box (tuple): Size of the bounding box (x, y, z)
             
         Returns:
-            str: Path to the generated STL file
+            str: Path to the downloaded STL file
         """
         data = {
             'beam_radius': beam_radius,
@@ -386,7 +456,12 @@ class VoxelizeClient:
         }
         response = self._make_request('POST', 'fcc', json=data)
         if response.get('success'):
-            return response['file_path']
+            # Download the file from GCS URL
+            download_url = response['result']['download_url']
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.stl')
+            output_path = temp_file.name
+            temp_file.close()
+            return self._download_file(download_url, output_path)
         raise ValueError(response.get('error', 'Unknown error occurred'))
 
     def BCC(self, beam_radius: float, bounding_box: tuple = (40, 40, 40)):
@@ -397,7 +472,7 @@ class VoxelizeClient:
             bounding_box (tuple): Size of the bounding box (x, y, z)
             
         Returns:
-            str: Path to the generated STL file
+            str: Path to the downloaded STL file
         """
         data = {
             'beam_radius': beam_radius,
@@ -405,7 +480,12 @@ class VoxelizeClient:
         }
         response = self._make_request('POST', 'bcc', json=data)
         if response.get('success'):
-            return response['file_path']
+            # Download the file from GCS URL
+            download_url = response['result']['download_url']
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.stl')
+            output_path = temp_file.name
+            temp_file.close()
+            return self._download_file(download_url, output_path)
         raise ValueError(response.get('error', 'Unknown error occurred'))
 
     def Flourite(self, beam_radius: float, bounding_box: tuple = (40, 40, 40)):
@@ -416,7 +496,7 @@ class VoxelizeClient:
             bounding_box (tuple): Size of the bounding box (x, y, z)
             
         Returns:
-            str: Path to the generated STL file
+            str: Path to the downloaded STL file
         """
         data = {
             'beam_radius': beam_radius,
@@ -424,19 +504,60 @@ class VoxelizeClient:
         }
         response = self._make_request('POST', 'flourite', json=data)
         if response.get('success'):
-            return response['file_path']
+            # Download the file from GCS URL
+            download_url = response['result']['download_url']
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.stl')
+            output_path = temp_file.name
+            temp_file.close()
+            return self._download_file(download_url, output_path)
         raise ValueError(response.get('error', 'Unknown error occurred'))
 
     def volume(self, file_path: str) -> float:
         """Calculate the volume of a mesh file.
         
         Args:
-            file_path (str): Path to the STL file
+            file_path (str): Path to the STL file or GCS URL from another function
             
         Returns:
             float: Volume of the mesh
         """
-        response = self._make_request('GET', 'volume', params={'file_path': file_path})
-        if response.get('success'):
-            return float(response['volume'])
-        raise ValueError(response.get('error', 'Unknown error occurred')) 
+        # Check if the path is a GCS URL
+        is_gcs_url = self._is_gcs_url(file_path)
+        blob_name = None
+        
+        if not is_gcs_url:
+            # Regular local file that needs to be uploaded
+            if not os.path.exists(file_path):
+                raise FileNotFoundError(f"File not found: {file_path}")
+            
+            if not file_path.lower().endswith('.stl'):
+                raise ValueError("Only STL files are supported")
+                
+            # Check file size
+            file_size = os.path.getsize(file_path)
+            
+            # Upload the file to GCS using appropriate method based on size
+            file_url = self._upload_file_to_gcs(file_path, file_size > 20 * 1024 * 1024)
+            
+            # Extract the blob name from the URL for cleanup later
+            blob_name = file_url.split('/')[-2] + '/' + file_url.split('/')[-1]
+        else:
+            # Already a GCS URL from another function
+            file_url = file_path
+            # Extract the blob name from the URL for cleanup later
+            blob_name = '/'.join(file_url.split('/')[4:]) if 'storage.googleapis.com' in file_url else file_url
+        
+        try:
+            # Get the volume from the server using the URL
+            response = self._make_request('GET', 'volume', params={'file_url': file_url})
+            if response.get('success'):
+                return float(response['volume'])
+            raise ValueError(response.get('error', 'Unknown error occurred'))
+        finally:
+            # Clean up the GCS file
+            if blob_name:
+                try:
+                    self._make_request('DELETE', f'delete-from-gcs/{blob_name}')
+                except Exception as e:
+                    print(f"Warning: Failed to clean up GCS file: {e}")
+                    # Continue even if cleanup fails
