@@ -10,13 +10,14 @@ import shutil
 class VoxelizeClient:
     """Python client for the Voxelize API."""
     
-    def __init__(self, api_key=None, api_url=None, base_url=None):
+    def __init__(self, api_key=None, api_url=None, base_url=None, deployment_mode='local'):
         """Initialize the client with API key and URL.
         
         Args:
             api_key (str, optional): API key for authentication. If not provided, will look for VIXIV_API_KEY environment variable
             api_url (str, optional): Base URL of the API. If not provided, will look for VIXIV_API_URL environment variable
             base_url (str, optional): Alias for api_url, maintained for backward compatibility
+            deployment_mode (str, optional): 'local' or 'gcp'. Determines how files are handled. Defaults to 'local'
         """
         self.api_key = api_key or os.getenv('VIXIV_API_KEY')
         if not self.api_key:
@@ -26,6 +27,24 @@ class VoxelizeClient:
         self.api_url = api_url or base_url or os.getenv('VIXIV_API_URL', 'https://vixiv-flask-api-gcp-523287772169.us-central1.run.app')
         self.session = requests.Session()
         self.session.headers.update({'X-API-Key': self.api_key})
+        self.deployment_mode = deployment_mode
+
+    def _handle_file_response(self, response, output_path=None):
+        """Handle file response based on deployment mode."""
+        if response.get('success'):
+            result = response['result']
+            if self.deployment_mode == 'gcp':
+                # For GCP mode, download using the authenticated URL
+                download_url = result['download_url']
+                return self._download_file(download_url, output_path)
+            else:
+                # For local mode, decode the file content from hex
+                output_dir = os.path.dirname(output_path) if output_path else tempfile.gettempdir()
+                output_path = output_path if output_path else os.path.join(output_dir, result['filename'])
+                with open(output_path, 'wb') as f:
+                    f.write(bytes.fromhex(result['file_content']))
+                return output_path
+        raise ValueError(response.get('error', 'Unknown error occurred'))
 
     def _download_file(self, url_or_path, output_path=None):
         """Download a file from a URL or copy from local path."""
@@ -144,11 +163,7 @@ class VoxelizeClient:
                 files = {'file': (os.path.basename(file_path), f, 'application/octet-stream')}
                 response = self._make_request('POST', 'voxelize', files=files, data=data)
             
-            if response.get('success'):
-                # Download using the authenticated URL
-                download_url = response['result']['download_url']
-                return self._download_file(download_url, network_path)
-            raise ValueError(response.get('error', 'Unknown error occurred'))
+            return self._handle_file_response(response, network_path)
 
         except Exception as e:
             print(f"Error during voxelization: {str(e)}")
@@ -231,12 +246,7 @@ class VoxelizeClient:
             }
             
             response = self._make_request('POST', 'integrate-network', files=files)
-            
-            if response.get('success'):
-                # Download using the public URL
-                download_url = response['result']['download_url']
-                return self._download_file(download_url, out_path)
-            raise ValueError(response.get('error', 'Unknown error occurred'))
+            return self._handle_file_response(response, out_path)
     
     def read_mesh(self, file_path: str) -> np.ndarray:
         """
