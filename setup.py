@@ -9,8 +9,8 @@ setup(
     author="Your Name",
     author_email="your.email@example.com",
     description="A Python SDK for the Vixiv API",
-    long_description=long_description,
-    long_description_content_type="text/markdown",
+    #long_description=long_description,
+    #long_description_content_type="text/markdown",
     packages=find_packages(),
     install_requires=[
         "requests==2.32.3",
